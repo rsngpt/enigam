@@ -16,7 +16,6 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
   final _otpController = TextEditingController();
   bool _loading = false;
   String? _phone;
-  String? _fullName;
 
   late final AnimationController _animationController;
   late final AnimationController _pulseController;
@@ -89,14 +88,10 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
     // Get the arguments passed from PhoneInputScreen
     final arguments = ModalRoute.of(context)?.settings.arguments;
 
-    if (arguments is Map<String, String>) {
-      // New format with both phone and fullName
-      _phone = arguments['phone'];
-      _fullName = arguments['fullName'];
-    } else if (arguments is String) {
-      // Old format with just phone
+    if (arguments is String) {
       _phone = arguments;
-      _fullName = null;
+    } else {
+      _phone = null;
     }
   }
 
@@ -128,9 +123,7 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
 
       if (res.session != null && res.user != null) {
         // OTP verification successful, now create/update profile
-        if (_fullName != null && _fullName!.isNotEmpty) {
-          await _createOrUpdateProfile(ph, _fullName!);
-        }
+        await _createOrUpdateProfile(ph);
 
         if (!mounted) return;
         Navigator.pushNamedAndRemoveUntil(context, '/home', (r) => false);
@@ -149,7 +142,7 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _createOrUpdateProfile(String phone, String fullName) async {
+  Future<void> _createOrUpdateProfile(String phone) async {
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) {
@@ -165,7 +158,6 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
 
       Map<String, dynamic> profileData = {
         'phone': phone,
-        'full_name': fullName,
       };
 
       if (existingProfile == null) {
@@ -214,41 +206,6 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  Widget _buildFloatingParticles() {
-    return AnimatedBuilder(
-      animation: _floatingAnimation,
-      builder: (context, child) {
-        return Stack(
-          children: List.generate(5, (index) {
-            final offset = index * (2 * math.pi / 5);
-            final x = math.cos(_floatingAnimation.value + offset) * 80;
-            final y = math.sin(_floatingAnimation.value + offset) * 60;
-
-            return Positioned(
-              left: MediaQuery.of(context).size.width / 2 + x,
-              top: MediaQuery.of(context).size.height / 3 + y,
-              child: Container(
-                width: 3 + (index % 2) * 2,
-                height: 3 + (index % 2) * 2,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFF3B82F6).withOpacity(0.4),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF3B82F6).withOpacity(0.6),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-        );
-      },
-    );
-  }
-
   Widget _buildHeader() {
     return AnimatedBuilder(
       animation: Listenable.merge([_slideAnimation, _pulseAnimation, _floatingAnimation]),
@@ -257,36 +214,26 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
           offset: Offset(0, _slideAnimation.value),
           child: Column(
             children: [
-              Transform.scale(
-                scale: _pulseAnimation.value,
-                child: Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [
-                        Color.lerp(const Color(0xFF3B82F6), const Color(0xFF1D4ED8),
-                            (math.sin(_floatingAnimation.value) + 1) / 2)!,
-                        Color.lerp(const Color(0xFF1D4ED8), const Color(0xFF3B82F6),
-                            (math.sin(_floatingAnimation.value) + 1) / 2)!,
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF3B82F6).withOpacity(0.5),
-                        blurRadius: 40,
-                        spreadRadius: 8,
-                      ),
+              Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      Color.lerp(const Color(0xFF3B82F6), const Color(0xFF1D4ED8),
+                          (math.sin(_floatingAnimation.value) + 1) / 2)!,
+                      Color.lerp(const Color(0xFF1D4ED8), const Color(0xFF3B82F6),
+                          (math.sin(_floatingAnimation.value) + 1) / 2)!,
                     ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  child: const Icon(
-                    Icons.security,
-                    size: 60,
-                    color: Colors.white,
-                  ),
+                ),
+                child: const Icon(
+                  Icons.security,
+                  size: 60,
+                  color: Colors.white,
                 ),
               ),
               const SizedBox(height: 32),
@@ -349,26 +296,7 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
                   );
                 },
               ),
-              if (_fullName != null && _fullName!.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                AnimatedBuilder(
-                  animation: _floatingAnimation,
-                  builder: (context, child) {
-                    return Transform.translate(
-                      offset: Offset(0, math.sin(_floatingAnimation.value * 1.8) * 1.5),
-                      child: Text(
-                        'Hi, $_fullName!',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF94A3B8),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  },
-                ),
-              ],
+
             ],
           ),
         );
@@ -618,7 +546,6 @@ class _OtpScreenState extends State<OtpScreen> with TickerProviderStateMixin {
               );
             },
           ),
-          _buildFloatingParticles(),
           SafeArea(
             child: Center(
               child: SingleChildScrollView(

@@ -19,6 +19,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   String? _userName;
   bool _isLoadingProfile = true;
+  
+  // Parking Alerts State
+  bool _hasActiveParkingAlert = false;
+  Map<String, dynamic>? _activeAlert;
+  String? _alertedVehiclePlate;
+  bool _isLoadingAlerts = true;
+  RealtimeChannel? _alertsChannel;
+  List<Map<String, dynamic>> _userVehicles = [];
 
   @override
   void initState() {
@@ -53,6 +61,118 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _floatingController.repeat();
 
     _loadUserProfile();
+    _initParkingAlerts();
+  }
+
+  Future<void> _initParkingAlerts() async {
+    await _fetchActiveAlert();
+
+    // Subscribe to Realtime changes
+    _alertsChannel = Supabase.instance.client
+        .channel('public:parking_alerts')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'parking_alerts',
+          callback: (payload) {
+            _fetchActiveAlert();
+          },
+        );
+    _alertsChannel?.subscribe();
+  }
+
+  Future<void> _fetchActiveAlert() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+
+      // 1. Get user's vehicles (cache them if needed, but safe to fetch)
+      final vehiclesResponse = await Supabase.instance.client
+          .from('vehicles')
+          .select('id, license_plate')
+          .eq('user_id', user.id);
+
+      final vehicles = List<Map<String, dynamic>>.from(vehiclesResponse);
+      _userVehicles = vehicles;
+      
+      if (vehicles.isEmpty) {
+        if (mounted) setState(() => _isLoadingAlerts = false);
+        return;
+      }
+
+      final vehicleIds = vehicles.map((v) => v['id']).toList();
+
+      if (!mounted) return;
+      
+      // 2. Check for pending alerts
+      final alertsResponse = await Supabase.instance.client
+          .from('parking_alerts')
+          .select()
+          .inFilter('vehicle_id', vehicleIds)
+          .eq('status', 'pending')
+          .order('created_at', ascending: false)
+          .limit(1);
+
+      final alerts = List<Map<String, dynamic>>.from(alertsResponse);
+
+      if (alerts.isNotEmpty && mounted) {
+        final active = alerts.first;
+        final vehicleId = active['vehicle_id'];
+        final vehicle = vehicles.firstWhere((v) => v['id'] == vehicleId);
+
+        setState(() {
+          _activeAlert = active;
+          _alertedVehiclePlate = vehicle['license_plate'];
+          _hasActiveParkingAlert = true;
+          _isLoadingAlerts = false;
+        });
+      } else if (mounted) {
+        setState(() {
+          _hasActiveParkingAlert = false;
+          _activeAlert = null;
+          _alertedVehiclePlate = null;
+          _isLoadingAlerts = false;
+        });
+      }
+    } catch (e) {
+      print('Error in fetchActiveAlert: $e');
+      if (mounted) setState(() => _isLoadingAlerts = false);
+    }
+  }
+
+  Future<void> _resolveParkingAlert() async {
+    if (_activeAlert == null) return;
+    
+    try {
+      await Supabase.instance.client
+          .from('parking_alerts')
+          .update({'status': 'resolved'})
+          .eq('id', _activeAlert!['id']);
+          
+      setState(() {
+        _hasActiveParkingAlert = false;
+        _activeAlert = null;
+        _alertedVehiclePlate = null;
+      });
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Alert marked as resolved!'),
+          backgroundColor: Colors.green,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error resolving alert: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   Future<void> _loadUserProfile() async {
@@ -463,36 +583,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               );
             },
           ),
-          ...List.generate(8, (index) {
-            return AnimatedBuilder(
-              animation: _floatingController,
-              builder: (context, child) {
-                final offset = index * (2 * math.pi / 8);
-                final x = math.cos(_floatingController.value * 2 * math.pi + offset) * 150;
-                final y = math.sin(_floatingController.value * 2 * math.pi + offset) * 100;
 
-                return Positioned(
-                  left: MediaQuery.of(context).size.width / 2 + x,
-                  top: MediaQuery.of(context).size.height / 4 + y,
-                  child: Container(
-                    width: 3 + (index % 3),
-                    height: 3 + (index % 3),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF3B82F6).withOpacity(0.2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF3B82F6).withOpacity(0.4),
-                          blurRadius: 8,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            );
-          }),
           SafeArea(
             child: FadeTransition(
               opacity: _fadeAnimation,
@@ -502,6 +593,83 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildWelcomeCard(),
+                    if (_hasActiveParkingAlert && _alertedVehiclePlate != null) ...[
+                      const SizedBox(height: 24),
+                      AnimatedBuilder(
+                        animation: _floatingController,
+                        builder: (context, child) {
+                          return Transform.translate(
+                            offset: Offset(0, math.sin(_floatingController.value * 2 * math.pi) * 5),
+                            child: Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFDC2626).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: const Color(0xFFEF4444).withOpacity(0.5),
+                                  width: 2,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFFEF4444).withOpacity(0.2),
+                                    blurRadius: 20,
+                                    spreadRadius: 2,
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEF4444).withOpacity(0.2),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.car_crash, color: Color(0xFFEF4444), size: 30),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'URGENT: CAR BLOCKED',
+                                          style: TextStyle(
+                                            color: Color(0xFFEF4444),
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            letterSpacing: 1.2,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Please move vehicle $_alertedVehiclePlate immediately.',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        ElevatedButton(
+                                          onPressed: _resolveParkingAlert,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFFEF4444),
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                                            minimumSize: Size.zero,
+                                          ),
+                                          child: const Text('Mark Resolved', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+                      ),
+                    ],
                     const SizedBox(height: 32),
                     AnimatedBuilder(
                       animation: _staggerController,
@@ -557,6 +725,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                 () => Navigator.pushNamed(context, '/nearby'),
                             const Color(0xFFEF4444),
                             2,
+                          ),
+                          _buildActionCard(
+                            'Car Parking',
+                            'Find or report spots',
+                            Icons.local_parking_rounded,
+                                () => Navigator.pushNamed(context, '/car-parking').then((_) => _fetchActiveAlert()),
+                            const Color(0xFFF59E0B),
+                            3,
+                          ),
+                          _buildActionCard(
+                            'Animal Rescue',
+                            'Report stray/injured',
+                            Icons.pets_rounded,
+                                () => Navigator.pushNamed(context, '/report', arguments: {'category': 'animal_rescue'}),
+                            const Color(0xFF8B5CF6),
+                            4,
                           ),
                         ],
                       ),

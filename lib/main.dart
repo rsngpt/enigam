@@ -6,8 +6,10 @@ import 'screens/otp_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/report_screen.dart';
 import 'screens/my_reports_screen.dart';
+import 'screens/nearby_report_screen.dart';
 import 'screens/admindashboardscreen.dart';
 import 'screens/adminloginscreen.dart';
+import 'screens/car_parking_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,6 +39,8 @@ class MyApp extends StatelessWidget {
         '/home': (_) => const HomeScreen(),
         '/report': (_) => const ReportScreen(), // 👈 NEW
         '/myreports': (_) => const MyReportsScreen(),
+        '/nearby': (_) => const NearbyReportsScreen(),
+        '/car-parking': (_) => const CarParkingScreen(),
         '/admin_login': (context) => const AdminLoginScreen(),
         // In your main.dart or router
         '/admin_dashboard': (context) {

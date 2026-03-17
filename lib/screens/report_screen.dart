@@ -691,36 +691,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
               );
             },
           ),
-          ...List.generate(6, (index) {
-            return AnimatedBuilder(
-              animation: _floatingController,
-              builder: (context, child) {
-                final offset = index * (2 * math.pi / 6);
-                final x = math.cos(_floatingController.value * 2 * math.pi + offset) * 120;
-                final y = math.sin(_floatingController.value * 2 * math.pi + offset) * 80;
 
-                return Positioned(
-                  left: MediaQuery.of(context).size.width / 2 + x,
-                  top: MediaQuery.of(context).size.height / 4 + y,
-                  child: Container(
-                    width: 2 + (index % 3),
-                    height: 2 + (index % 3),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF3B82F6).withOpacity(0.2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF3B82F6).withOpacity(0.4),
-                          blurRadius: 6,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            );
-          }),
           SafeArea(
             child: FadeTransition(
               opacity: _fadeAnimation,

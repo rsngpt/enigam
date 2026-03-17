@@ -16,7 +16,6 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
     with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _nameController = TextEditingController();
   bool _isLoading = false;
 
   late final AnimationController _animationController;
@@ -77,7 +76,6 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
     _pulseController.dispose();
     _floatingController.dispose();
     _phoneController.dispose();
-    _nameController.dispose();
     super.dispose();
   }
 
@@ -86,21 +84,15 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
 
     final rawPhone = _phoneController.text.trim();
     final phone = '+91$rawPhone';
-    final fullName = _nameController.text.trim();
 
     setState(() => _isLoading = true);
     try {
       // Send OTP
       await Supabase.instance.client.auth.signInWithOtp(phone: phone);
 
-      // Store user data in database
-      await _storeUserData(phone, fullName);
-
       if (!mounted) return;
-      Navigator.pushNamed(context, '/otp', arguments: {
-        'phone': phone,
-        'fullName': fullName,
-      });
+      // Send the phone number to the OTP screen
+      Navigator.pushNamed(context, '/otp', arguments: phone);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -116,52 +108,7 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
     }
   }
 
-  Future<void> _storeUserData(String phone, String fullName) async {
-    try {
-      // Store data temporarily - will be saved to profiles table after OTP verification
-      // For now, we'll just pass this data to the OTP screen
-      // The actual profile creation will happen after successful OTP verification
-      print('User data prepared for storage: $phone, $fullName');
-    } catch (e) {
-      print('Error preparing user data: $e');
-      // Don't throw here as OTP was sent successfully
-    }
-  }
 
-  Widget _buildFloatingParticles() {
-    return AnimatedBuilder(
-      animation: _floatingAnimation,
-      builder: (context, child) {
-        return Stack(
-          children: List.generate(6, (index) {
-            final offset = index * (2 * math.pi / 6);
-            final x = math.cos(_floatingAnimation.value + offset) * 100;
-            final y = math.sin(_floatingAnimation.value + offset) * 80;
-
-            return Positioned(
-              left: MediaQuery.of(context).size.width / 2 + x,
-              top: MediaQuery.of(context).size.height / 3 + y,
-              child: Container(
-                width: 4 + (index % 3) * 2,
-                height: 4 + (index % 3) * 2,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFF3B82F6).withOpacity(0.3),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF3B82F6).withOpacity(0.5),
-                      blurRadius: 10,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-        );
-      },
-    );
-  }
 
   Widget _buildHeader() {
     return AnimatedBuilder(
@@ -171,41 +118,21 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
           offset: Offset(0, _slideAnimation.value),
           child: Column(
             children: [
-              Transform.scale(
-                scale: _pulseAnimation.value,
-                child: Image.asset(
-                  'assets/images/eNigamLogo.png',
-                  width: 200,
-                  height: 200,
-                  fit: BoxFit.contain,
-                ),
+              Image.asset(
+                'assets/images/eNigamLogo.png',
+                width: 200,
+                height: 200,
+                fit: BoxFit.contain,
               ),
               const SizedBox(height: 32),
-              AnimatedBuilder(
-                animation: _floatingAnimation,
-                builder: (context, child) {
-                  return ShaderMask(
-                    shaderCallback: (bounds) => LinearGradient(
-                      colors: [
-                        Color.lerp(const Color(0xFF3B82F6), const Color(0xFF1D4ED8),
-                            (math.sin(_floatingAnimation.value) + 1) / 2)!,
-                        Color.lerp(const Color(0xFF1D4ED8), const Color(0xFF3B82F6),
-                            (math.sin(_floatingAnimation.value) + 1) / 2)!,
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ).createShader(bounds),
-                    child: const Text(
-                      'Welcome Back',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  );
-                },
+              const Text(
+                'Welcome Back',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
               TweenAnimationBuilder<int>(
@@ -324,10 +251,10 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
                   color: const Color(0xFF0F172A).withOpacity(0.8),
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(
-                    color: (_phoneController.text.isNotEmpty || _nameController.text.isNotEmpty)
+                    color: (_phoneController.text.isNotEmpty)
                         ? const Color(0xFF3B82F6).withOpacity(0.6)
                         : const Color(0xFF334155).withOpacity(0.3),
-                    width: (_phoneController.text.isNotEmpty || _nameController.text.isNotEmpty) ? 2 : 1,
+                    width: (_phoneController.text.isNotEmpty) ? 2 : 1,
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -347,20 +274,7 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildInputField(
-                        controller: _nameController,
-                        hintText: 'Full Name',
-                        keyboardType: TextInputType.name,
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) {
-                            return 'Enter your full name';
-                          }
-                          if (v.trim().length < 2) {
-                            return 'Name must be at least 2 characters';
-                          }
-                          return null;
-                        },
-                      ),
+
                       _buildInputField(
                         controller: _phoneController,
                         hintText: 'Phone number',
@@ -555,53 +469,7 @@ class _PhoneInputScreenState extends State<PhoneInputScreen>
                 ),
               );
             },
-          ),
-          _buildFloatingParticles(),
-          AnimatedBuilder(
-            animation: _floatingAnimation,
-            builder: (context, child) {
-              return Positioned(
-                top: -100 + math.sin(_floatingAnimation.value * 0.5) * 20,
-                right: -100 + math.cos(_floatingAnimation.value * 0.3) * 30,
-                child: Container(
-                  width: 300,
-                  height: 300,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xFF3B82F6).withOpacity(0.15),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-          AnimatedBuilder(
-            animation: _floatingAnimation,
-            builder: (context, child) {
-              return Positioned(
-                bottom: -150 + math.cos(_floatingAnimation.value * 0.4) * 25,
-                left: -150 + math.sin(_floatingAnimation.value * 0.6) * 35,
-                child: Container(
-                  width: 400,
-                  height: 400,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xFF1D4ED8).withOpacity(0.12),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-          SafeArea(
+          ),          SafeArea(
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
