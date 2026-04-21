@@ -37,6 +37,9 @@ if [ ! -f .env ]; then
     if [ ! -z "$SUPABASE_ANON_KEY" ]; then
         echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> .env
     fi
+    if [ ! -z "$GEMINI_API_KEY" ]; then
+        echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
+    fi
     
     # Check if empty (no env vars provided)
     if [ ! -s .env ]; then
