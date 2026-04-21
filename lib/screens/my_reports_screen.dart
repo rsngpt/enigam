@@ -42,12 +42,72 @@ class _MyReportsScreenState extends State<MyReportsScreen> with TickerProviderSt
     final response = await supabase
         .from('reports')
         .select()
+        .order('danger_score', ascending: false, nullsFirst: false)
         .order('created_at', ascending: false);
 
     if (response is List) {
       return List<Map<String, dynamic>>.from(response);
     } else {
       throw Exception('Unexpected response: $response');
+    }
+  }
+
+  Future<void> _confirmDelete(dynamic reportId) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Delete Report', style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'Are you sure you want to delete this report? This action cannot be undone.',
+            style: TextStyle(color: Color(0xFF94A3B8)),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8))),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      _deleteReport(reportId);
+    }
+  }
+
+  Future<void> _deleteReport(dynamic reportId) async {
+    try {
+      await supabase.from('reports').delete().eq('id', reportId);
+      setState(() {
+        _reportsFuture = _fetchReports();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Report deleted successfully'),
+            backgroundColor: Color(0xFF10B981),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting report: $error'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -192,6 +252,24 @@ class _MyReportsScreenState extends State<MyReportsScreen> with TickerProviderSt
                                             ),
                                           ),
                                         ),
+                                        if (report['danger_level'] != null) ...[
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: _getSeverityColor(report['danger_level']).withOpacity(0.2),
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              report['danger_level'].toString().toUpperCase(),
+                                              style: TextStyle(
+                                                color: _getSeverityColor(report['danger_level']),
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                         const Spacer(),
                                         Text(
                                           _formatDate(report['created_at']),
@@ -206,6 +284,12 @@ class _MyReportsScreenState extends State<MyReportsScreen> with TickerProviderSt
                                 ),
                               ),
                               const SizedBox(width: 8),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                                onPressed: () {
+                                  _confirmDelete(report['id']);
+                                },
+                              ),
                               const Icon(
                                 Icons.arrow_forward_ios,
                                 color: Color(0xFF64748B),
@@ -238,6 +322,21 @@ class _MyReportsScreenState extends State<MyReportsScreen> with TickerProviderSt
         return const Color(0xFF6B7280);
       default:
         return const Color(0xFF3B82F6);
+    }
+  }
+
+  Color _getSeverityColor(String? severity) {
+    switch (severity?.toLowerCase()) {
+      case 'low':
+        return const Color(0xFF3B82F6);
+      case 'medium':
+        return const Color(0xFFF59E0B);
+      case 'high':
+        return const Color(0xFFEF4444);
+      case 'critical':
+        return const Color(0xFF991B1B);
+      default:
+        return const Color(0xFF64748B);
     }
   }
 

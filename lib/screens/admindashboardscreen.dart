@@ -120,6 +120,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       if (reportsResponse is List) {
         reportsData = List<Map<String, dynamic>>.from(
             reportsResponse.map((e) => Map<String, dynamic>.from(e as Map)));
+            
+        // Sort by danger_score descending so critical items are at top
+        reportsData.sort((a, b) {
+          int scoreA = int.tryParse(a['danger_score']?.toString() ?? '0') ?? 0;
+          int scoreB = int.tryParse(b['danger_score']?.toString() ?? '0') ?? 0;
+          return scoreB.compareTo(scoreA);
+        });
       }
 
       // --------------------

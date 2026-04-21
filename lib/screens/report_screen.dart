@@ -9,6 +9,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path/path.dart' as p;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'dart:convert';
+
+import 'my_reports_screen.dart';
 
 class ReportScreen extends StatefulWidget {
   const ReportScreen({super.key});
@@ -26,6 +31,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
   File? _imageFile;
 
   bool _isLoading = false;
+  String _loadingText = 'Submitting...';
   double? _latitude;
   double? _longitude;
 
@@ -192,12 +198,72 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadingText = 'Analyzing issue with AI...';
+    });
 
     String? imageUrl;
     String? imagePath;
 
     try {
+      final apiKey = dotenv.env['GEMINI_API_KEY'];
+      if (apiKey == null) {
+        throw Exception('GEMINI_API_KEY is not set in .env');
+      }
+
+      final model = GenerativeModel(model: 'gemini-2.0-flash-lite', apiKey: apiKey);
+      
+      String prompt = '''
+Analyze the provided road hazard / pothole report (image and/or description).
+Evaluate the hazard accurately and return a JSON object classifying the danger.
+
+Strict Grading Guidelines:
+1. Garbage/Trash: Standard roadside garbage or litter is strictly "low" (Score: 1). Only use "medium" if it partially blocks a driving lane. Never use high/critical for mere garbage.
+2. Potholes: Massive, deep sinkholes are "critical". Average damaging potholes are "high". Minor surface damage is "low" or "medium".
+3. Animals: Dangerous stray animals in active traffic are "critical" or "high".
+4. Other: Base the score solely on immediate risk to human life or vehicular damage.
+
+Do not return any markdown formatting. Only pure JSON.
+{
+  "danger_level": "critical", // Output one of: critical, high, medium, low
+  "danger_score": 4           // critical=4, high=3, medium=2, low=1
+}
+
+Description provided by user: "${_descController.text.trim()}"
+''';
+      
+      List<Part> parts = [TextPart(prompt)];
+      
+      if (kIsWeb && _webImage != null) {
+        parts.add(DataPart('image/jpeg', _webImage!));
+      } else if (!kIsWeb && _imageFile != null) {
+        final bytes = await _imageFile!.readAsBytes();
+        final ext = p.extension(_imageFile!.path).toLowerCase();
+        final mimeType = ext == '.png' ? 'image/png' : 'image/jpeg';
+        parts.add(DataPart(mimeType, bytes));
+      }
+
+      final aiResponse = await model.generateContent([
+        Content.multi(parts)
+      ]);
+
+      debugPrint('Gemini Raw Result: ${aiResponse.text}');
+      final rawResponse = aiResponse.text?.replaceAll('```json', '').replaceAll('```', '').trim() ?? '{}';
+      Map<String, dynamic> aiAnalysis = {};
+      try {
+        aiAnalysis = jsonDecode(rawResponse);
+      } catch (e) {
+        debugPrint('Failed to parse AI JSON: $e');
+      }
+      
+      final String aiDangerLevel = aiAnalysis['danger_level']?.toString().toLowerCase() ?? 'medium';
+      final int aiDangerScore = int.tryParse(aiAnalysis['danger_score']?.toString() ?? '2') ?? 2;
+
+      setState(() {
+        _loadingText = 'Uploading report...';
+      });
+
       if (hasImage) {
         // Upload image
         final publicUrl = await _uploadFile(user.id);
@@ -225,27 +291,30 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
         'image_url': imageUrl,
         'latitude': _latitude,
         'longitude': _longitude,
+        'danger_level': aiDangerLevel,
+        'danger_score': aiDangerScore,
       };
 
       await supabase.from('reports').insert(insertData).select();
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Report submitted successfully')));
 
-      // Reset form
-      setState(() {
-        _webImage = null;
-        _imageFile = null;
-        _descController.clear();
-        _latitude = null;
-        _longitude = null;
-      });
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const MyReportsScreen()),
+      );
     } catch (e) {
       debugPrint('Submit error: $e');
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      }
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -766,9 +835,9 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
                                 ),
                               ),
                               const SizedBox(width: 12),
-                              const Text(
-                                'Submitting...',
-                                style: TextStyle(
+                              Text(
+                                _loadingText,
+                                style: const TextStyle(
                                   color: Color(0xFF94A3B8),
                                   fontSize: 16,
                                   fontWeight: FontWeight.w600,

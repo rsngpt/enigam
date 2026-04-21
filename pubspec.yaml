@@ -36,6 +36,7 @@ dependencies:
   # Supabase & Auth
   supabase_flutter: ^2.10.1
   flutter_dotenv: ^6.0.0
+  google_generative_ai: ^0.4.6
 
   # For image picking (camera / gallery)
   image_picker: ^1.2.0
