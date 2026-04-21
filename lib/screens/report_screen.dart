@@ -212,7 +212,7 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
         throw Exception('GEMINI_API_KEY is not set in .env');
       }
 
-      final model = GenerativeModel(model: 'gemini-2.0-flash-lite', apiKey: apiKey);
+      final model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: apiKey);
       
       String prompt = '''
 Analyze the provided road hazard / pothole report (image and/or description).
