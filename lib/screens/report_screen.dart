@@ -200,70 +200,13 @@ class _ReportScreenState extends State<ReportScreen> with TickerProviderStateMix
 
     setState(() {
       _isLoading = true;
-      _loadingText = 'Analyzing issue with AI...';
+      _loadingText = 'Uploading report...';
     });
 
     String? imageUrl;
     String? imagePath;
 
     try {
-      final apiKey = dotenv.env['GEMINI_API_KEY'];
-      if (apiKey == null) {
-        throw Exception('GEMINI_API_KEY is not set in .env');
-      }
-
-      final model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: apiKey);
-      
-      String prompt = '''
-Analyze the provided road hazard / pothole report (image and/or description).
-Evaluate the hazard accurately and return a JSON object classifying the danger.
-
-Strict Grading Guidelines:
-1. Garbage/Trash: Standard roadside garbage or litter is strictly "low" (Score: 1). Only use "medium" if it partially blocks a driving lane. Never use high/critical for mere garbage.
-2. Potholes: Massive, deep sinkholes are "critical". Average damaging potholes are "high". Minor surface damage is "low" or "medium".
-3. Animals: Dangerous stray animals in active traffic are "critical" or "high".
-4. Other: Base the score solely on immediate risk to human life or vehicular damage.
-
-Do not return any markdown formatting. Only pure JSON.
-{
-  "danger_level": "critical", // Output one of: critical, high, medium, low
-  "danger_score": 4           // critical=4, high=3, medium=2, low=1
-}
-
-Description provided by user: "${_descController.text.trim()}"
-''';
-      
-      List<Part> parts = [TextPart(prompt)];
-      
-      if (kIsWeb && _webImage != null) {
-        parts.add(DataPart('image/jpeg', _webImage!));
-      } else if (!kIsWeb && _imageFile != null) {
-        final bytes = await _imageFile!.readAsBytes();
-        final ext = p.extension(_imageFile!.path).toLowerCase();
-        final mimeType = ext == '.png' ? 'image/png' : 'image/jpeg';
-        parts.add(DataPart(mimeType, bytes));
-      }
-
-      final aiResponse = await model.generateContent([
-        Content.multi(parts)
-      ]);
-
-      debugPrint('Gemini Raw Result: ${aiResponse.text}');
-      final rawResponse = aiResponse.text?.replaceAll('```json', '').replaceAll('```', '').trim() ?? '{}';
-      Map<String, dynamic> aiAnalysis = {};
-      try {
-        aiAnalysis = jsonDecode(rawResponse);
-      } catch (e) {
-        debugPrint('Failed to parse AI JSON: $e');
-      }
-      
-      final String aiDangerLevel = aiAnalysis['danger_level']?.toString().toLowerCase() ?? 'medium';
-      final int aiDangerScore = int.tryParse(aiAnalysis['danger_score']?.toString() ?? '2') ?? 2;
-
-      setState(() {
-        _loadingText = 'Uploading report...';
-      });
-
       if (hasImage) {
         // Upload image
         final publicUrl = await _uploadFile(user.id);
@@ -283,7 +226,7 @@ Description provided by user: "${_descController.text.trim()}"
         await _getCurrentLocation();
       }
 
-      // Insert into 'reports' table
+      // 1. Insert into 'reports' table with default/pending status
       final insertData = {
         'user_id': user.id,
         'description': _descController.text.trim(),
@@ -291,11 +234,35 @@ Description provided by user: "${_descController.text.trim()}"
         'image_url': imageUrl,
         'latitude': _latitude,
         'longitude': _longitude,
-        'danger_level': aiDangerLevel,
-        'danger_score': aiDangerScore,
+        'danger_level': 'pending',
+        'danger_score': 0,
       };
 
-      await supabase.from('reports').insert(insertData).select();
+      final response = await supabase.from('reports').insert(insertData).select();
+      
+      if (response.isNotEmpty) {
+        final reportId = response.first['id'];
+        
+        // 2. Prepare data for background analysis
+        final description = _descController.text.trim();
+        List<Part> parts = [];
+        if (kIsWeb && _webImage != null) {
+          parts.add(DataPart('image/jpeg', _webImage!));
+        } else if (!kIsWeb && _imageFile != null) {
+          final bytes = await _imageFile!.readAsBytes();
+          final ext = p.extension(_imageFile!.path).toLowerCase();
+          final mimeType = ext == '.png' ? 'image/png' : 'image/jpeg';
+          parts.add(DataPart(mimeType, bytes));
+        }
+        
+        final apiKey = dotenv.env['GEMINI_API_KEY'];
+        if (apiKey != null) {
+          // 3. Fire and forget background task
+          _analyzeInBackground(reportId, apiKey, description, parts);
+        } else {
+          debugPrint('GEMINI_API_KEY not found. Skipping AI analysis.');
+        }
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -314,6 +281,73 @@ Description provided by user: "${_descController.text.trim()}"
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _analyzeInBackground(String reportId, String apiKey, String description, List<Part> imageParts) async {
+    const int maxRetries = 10;
+    int attempt = 0;
+    bool success = false;
+    
+    while (attempt < maxRetries && !success) {
+      try {
+        debugPrint('Starting background AI analysis for report: $reportId (Attempt ${attempt + 1})');
+        final model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: apiKey);
+        
+        String prompt = '''
+Analyze the provided road hazard / pothole report (image and/or description).
+Evaluate the hazard accurately and return a JSON object classifying the danger.
+
+Strict Grading Guidelines:
+1. Garbage/Trash: Standard roadside garbage or litter is strictly "low" (Score: 1). Only use "medium" if it partially blocks a driving lane. Never use high/critical for mere garbage.
+2. Potholes: Massive, deep sinkholes are "critical". Average damaging potholes are "high". Minor surface damage is "low" or "medium".
+3. Animals: Dangerous stray animals in active traffic are "critical" or "high".
+4. Other: Base the score solely on immediate risk to human life or vehicular damage.
+
+Do not return any markdown formatting. Only pure JSON.
+{
+  "danger_level": "critical", // Output one of: critical, high, medium, low
+  "danger_score": 4           // critical=4, high=3, medium=2, low=1
+}
+
+Description provided by user: "${description}"
+''';
+
+        List<Part> parts = [TextPart(prompt), ...imageParts];
+        
+        final aiResponse = await model.generateContent([Content.multi(parts)]);
+        
+        debugPrint('Background AI Raw Result: ${aiResponse.text}');
+        final rawResponse = aiResponse.text?.replaceAll('```json', '').replaceAll('```', '').trim() ?? '{}';
+        Map<String, dynamic> aiAnalysis = {};
+        try {
+          aiAnalysis = jsonDecode(rawResponse);
+        } catch (e) {
+          debugPrint('Failed to parse AI JSON in background: $e');
+        }
+        
+        final String aiDangerLevel = aiAnalysis['danger_level']?.toString().toLowerCase() ?? 'medium';
+        final int aiDangerScore = int.tryParse(aiAnalysis['danger_score']?.toString() ?? '2') ?? 2;
+
+        final supabase = Supabase.instance.client;
+        await supabase.from('reports').update({
+          'danger_level': aiDangerLevel,
+          'danger_score': aiDangerScore,
+        }).eq('id', reportId);
+        
+        debugPrint('Background analysis completed successfully for report: $reportId');
+        success = true;
+      } catch (e) {
+        attempt++;
+        debugPrint('Background analysis failed for report $reportId on attempt $attempt: $e');
+        if (attempt < maxRetries) {
+          final delaySeconds = 5 * attempt; // Exponential/linear backoff: 5s, 10s, 15s...
+          debugPrint('Waiting $delaySeconds seconds before retrying...');
+          await Future.delayed(Duration(seconds: delaySeconds));
+        } else {
+          debugPrint('Max retries reached. Background analysis ultimately failed for report $reportId.');
+        }
       }
     }
   }
